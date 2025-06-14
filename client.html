@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Queue System Test Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            border-left: 4px solid #007bff;
+            background-color: #e7f3ff;
+        }
+        .error {
+            border-left-color: #dc3545;
+            background-color: #ffeaa7;
+        }
+        .success {
+            border-left-color: #28a745;
+            background-color: #d4edda;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px 0;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Queue System Test Client</h1>
+        
+        <div id="status" class="status">
+            Disconnected
+        </div>
+
+        <div>
+            <h3>Request Parameters (JSON)</h3>
+            <textarea id="parameters" rows="5" placeholder='{"key": "value", "another_key": "another_value"}'>{
+  "message": "Hello from queue system",
+  "user_id": "test_user_123",
+  "data": {
+    "action": "test_request",
+    "timestamp": "2025-06-14T12:00:00Z"
+  }
+}</textarea>
+        </div>
+
+        <div>
+            <button id="connectBtn" onclick="connect()">Connect & Send Request</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+        </div>
+
+        <div>
+            <h3>Messages Log</h3>
+            <div id="log" class="log"></div>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let connected = false;
+
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status';
+            if (type === 'error') {
+                statusDiv.classList.add('error');
+            } else if (type === 'success') {
+                statusDiv.classList.add('success');
+            }
+        }
+
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function connect() {
+            if (connected) {
+                log('Already connected');
+                return;
+            }
+
+            const parametersText = document.getElementById('parameters').value;
+            let parameters;
+            
+            try {
+                parameters = JSON.parse(parametersText);
+            } catch (e) {
+                log('ERROR: Invalid JSON parameters - ' + e.message);
+                updateStatus('Invalid JSON parameters', 'error');
+                return;
+            }
+
+            ws = new WebSocket('ws://localhost:8080');
+            
+            ws.onopen = function() {
+                connected = true;
+                updateStatus('Connected - Sending request...', 'success');
+                log('Connected to WebSocket server');
+                
+                // Send parameters immediately after connection
+                const message = { parameters: parameters };
+                ws.send(JSON.stringify(message));
+                log('Sent request: ' + JSON.stringify(message, null, 2));
+                
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+            };
+
+            ws.onmessage = function(event) {
+                console.log('Message received:', event.data);
+                const data = JSON.parse(event.data);
+                log('Received: ' + JSON.stringify(data, null, 2));
+                
+                switch(data.type) {
+                    case 'queue_position':
+                        updateStatus(`Queue position: ${data.position} (${data.total_ahead} users ahead)`, 'info');
+                        break;
+                    case 'processing':
+                        updateStatus('Your request is being processed...', 'info');
+                        break;
+                    case 'result':
+                        updateStatus('Request completed successfully!', 'success');
+                        log('SUCCESS RESULT: ' + JSON.stringify(data.data, null, 2));
+                        break;
+                    case 'error':
+                        updateStatus('Request failed: ' + data.message, 'error');
+                        break;
+                    case 'queue_full':
+                        updateStatus('Queue is full: ' + data.message, 'error');
+                        break;
+                    default:
+                        updateStatus('Received message: ' + data.type, 'info');
+                }
+            };
+
+            ws.onclose = function() {
+                connected = false;
+                updateStatus('Disconnected', 'error');
+                log('WebSocket connection closed');
+                document.getElementById('connectBtn').disabled = false;
+                document.getElementById('disconnectBtn').disabled = true;
+            };
+
+            ws.onerror = function(error) {
+                log('WebSocket error: ' + error);
+                updateStatus('Connection error', 'error');
+            };
+        }
+
+        function disconnect() {
+            if (ws && connected) {
+                ws.close();
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        // Auto-connect on page load for testing
+        // window.onload = function() {
+        //     setTimeout(connect, 1000);
+        // };
+    </script>
+</body>
+</html>
