@@ -101,9 +101,11 @@ impl QueueSystem {
                 message: "Sorry, the queue is currently full. Please try again later.".to_string(),
             };
             
-            if let Ok(msg_str) = serde_json::to_string(&message) {
-                let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
-            }
+if let Ok(msg_str) = serde_json::to_string(&message) {
+    // DEBUG: print sent info
+    println!("Sent to client {}: {}", user.id, msg_str);
+    let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+}
             
             return Ok(false);
         }
@@ -156,13 +158,15 @@ impl QueueSystem {
                 total_ahead: index,
             };
 
-            if let Ok(msg_str) = serde_json::to_string(&message) {
-                if let Ok(mut ws) = user.websocket.try_lock() {
-                    if let Err(e) = ws.send(Message::Text(msg_str)).await {
-                        warn!("Failed to send position update to user {}: {}", user.id, e);
-                    }
-                }
-            }
+if let Ok(msg_str) = serde_json::to_string(&message) {
+    // DEBUG: print sent info
+    println!("Sent to client {}: {}", user.id, msg_str);
+    if let Ok(mut ws) = user.websocket.try_lock() {
+        if let Err(e) = ws.send(Message::Text(msg_str)).await {
+            warn!("Failed to send position update to user {}: {}", user.id, e);
+        }
+    }
+}
         }
     }
 
@@ -183,16 +187,18 @@ impl QueueSystem {
 
             // Send processing message
             let processing_msg = ServerMessage::Processing;
-            if let Ok(msg_str) = serde_json::to_string(&processing_msg) {
-                let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
-            }
+if let Ok(msg_str) = serde_json::to_string(&processing_msg) {
+    // DEBUG: print sent info
+    println!("Sent to client {}: {}", user.id, msg_str);
+    let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+}
 
             // Wait for the required delay
             sleep(PROCESSING_DELAY).await;
 
             // Make HTTP request
             let response_result = self.http_client
-                .get(&self.target_url)
+                .post(&self.target_url)
                 .json(&user.request.parameters)
                 .send()
                 .await;
@@ -226,9 +232,11 @@ impl QueueSystem {
             };
 
             // Send response to user
-            if let Ok(msg_str) = serde_json::to_string(&message) {
-                let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
-            }
+if let Ok(msg_str) = serde_json::to_string(&message) {
+    // DEBUG: print sent info
+    println!("Sent to client {}: {}", user.id, msg_str);
+    let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+}
 
             // Log to database
             self.log_request(&user.request, &log_response).await?;
@@ -315,11 +323,13 @@ async fn handle_websocket(stream: TcpStream, queue_system: Arc<QueueSystem>) -> 
         match msg_result {
             Ok(Message::Text(text)) => {
                 match serde_json::from_str::<ClientMessage>(&text) {
-                    Ok(client_msg) => {
-                        let user_request = UserRequest {
-                            id: user_id.clone(),
-                            parameters: client_msg.parameters,
-                        };
+Ok(client_msg) => {
+    // DEBUG: print received info
+    println!("Received from client {}: {:?}", user_id, client_msg);
+    let user_request = UserRequest {
+        id: user_id.clone(),
+        parameters: client_msg.parameters,
+    };
 
                         // Reunite the WebSocket streams
                         let websocket = ws_sender.reunite(ws_receiver)?;
