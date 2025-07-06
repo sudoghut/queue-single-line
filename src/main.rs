@@ -20,6 +20,7 @@ use uuid::Uuid;
 const MAX_QUEUE_SIZE: usize = 30;
 const PROCESSING_DELAY: Duration = Duration::from_secs(10);
 const QUEUE_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+const ENABLE_IP_RESTRICTION: bool = false; // Set to true/false to switch IP-based restrictions
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct UserRequest {
@@ -51,8 +52,12 @@ enum ServerMessage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ClientMessage {
-    parameters: Value,
+#[serde(tag = "type")]
+enum ClientMessage {
+    #[serde(rename = "request")]
+    Request { parameters: Value },
+    #[serde(rename = "cancel")]
+    Cancel,
 }
 
 struct QueuedUser {
@@ -100,36 +105,38 @@ impl QueueSystem {
     }
 
     async fn add_user(&self, user: QueuedUser) -> Result<bool> {
-        // Check if IP is already in queue or being processed
-        {
-            let queued_ips = self.queued_ips.read().await;
-            if queued_ips.contains_key(&user.ip_address) {
-                let message = ServerMessage::IpRestricted {
-                    message: "您的IP地址已有请求在处理中，请等待完成后再试".to_string(),
-                };
-                
-                if let Ok(msg_str) = serde_json::to_string(&message) {
-                    println!("Sent to client {}: {}", user.id, msg_str);
-                    let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+        // Check if IP restriction is enabled and IP is already in queue or being processed
+        if ENABLE_IP_RESTRICTION {
+            {
+                let queued_ips = self.queued_ips.read().await;
+                if queued_ips.contains_key(&user.ip_address) {
+                    let message = ServerMessage::IpRestricted {
+                        message: "您的IP地址已有请求在处理中，请等待完成后再试".to_string(),
+                    };
+                    
+                    if let Ok(msg_str) = serde_json::to_string(&message) {
+                        println!("Sent to client {}: {}", user.id, msg_str);
+                        let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+                    }
+                    
+                    return Ok(false);
                 }
-                
-                return Ok(false);
             }
-        }
 
-        {
-            let processing_ip = self.processing_ip.lock().await;
-            if processing_ip.as_ref() == Some(&user.ip_address) {
-                let message = ServerMessage::IpRestricted {
-                    message: "您的IP地址已有请求在处理中，请等待完成后再试".to_string(),
-                };
-                
-                if let Ok(msg_str) = serde_json::to_string(&message) {
-                    println!("Sent to client {}: {}", user.id, msg_str);
-                    let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+            {
+                let processing_ip = self.processing_ip.lock().await;
+                if processing_ip.as_ref() == Some(&user.ip_address) {
+                    let message = ServerMessage::IpRestricted {
+                        message: "您的IP地址已有请求在处理中，请等待完成后再试".to_string(),
+                    };
+                    
+                    if let Ok(msg_str) = serde_json::to_string(&message) {
+                        println!("Sent to client {}: {}", user.id, msg_str);
+                        let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+                    }
+                    
+                    return Ok(false);
                 }
-                
-                return Ok(false);
             }
         }
 
@@ -156,7 +163,7 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
             connections.insert(user.id.clone(), user.websocket.clone());
         }
 
-        {
+        if ENABLE_IP_RESTRICTION {
             let mut queued_ips = self.queued_ips.write().await;
             queued_ips.insert(user.ip_address.clone(), user.id.clone());
         }
@@ -168,9 +175,11 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
     }
 
     async fn remove_user(&self, user_id: &str) {
-        let user_ip = {
+        let user_ip = if ENABLE_IP_RESTRICTION {
             let queue = self.queue.lock().await;
             queue.iter().find(|user| user.id == user_id).map(|user| user.ip_address.clone())
+        } else {
+            None
         };
 
         {
@@ -183,10 +192,12 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
             connections.remove(user_id);
         }
 
-        // Remove from IP tracking
-        if let Some(ip) = user_ip {
-            let mut queued_ips = self.queued_ips.write().await;
-            queued_ips.remove(&ip);
+        // Remove from IP tracking only if IP restriction is enabled
+        if ENABLE_IP_RESTRICTION {
+            if let Some(ip) = user_ip {
+                let mut queued_ips = self.queued_ips.write().await;
+                queued_ips.remove(&ip);
+            }
         }
 
         {
@@ -196,12 +207,17 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
             }
         }
 
-        {
+        if ENABLE_IP_RESTRICTION {
             let mut processing_ip = self.processing_ip.lock().await;
             *processing_ip = None;
         }
 
         info!("User {} removed from queue", user_id);
+    }
+
+    async fn cancel_user(&self, user_id: &str) {
+        info!("Cancelling user: {}", user_id);
+        self.remove_user(user_id).await;
     }
 
     async fn broadcast_queue_positions(&self) {
@@ -246,13 +262,13 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
                 *processing = Some(user.id.clone());
             }
 
-            {
+            if ENABLE_IP_RESTRICTION {
                 let mut processing_ip = self.processing_ip.lock().await;
                 *processing_ip = Some(user.ip_address.clone());
             }
 
-            // Remove from queued IPs since it's now processing
-            {
+            // Remove from queued IPs since it's now processing (only if IP restriction is enabled)
+            if ENABLE_IP_RESTRICTION {
                 let mut queued_ips = self.queued_ips.write().await;
                 queued_ips.remove(&user.ip_address);
             }
@@ -319,7 +335,7 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
                 *processing = None;
             }
 
-            {
+            if ENABLE_IP_RESTRICTION {
                 let mut processing_ip = self.processing_ip.lock().await;
                 *processing_ip = None;
             }
@@ -400,13 +416,13 @@ async fn handle_websocket(stream: TcpStream, queue_system: Arc<QueueSystem>, cli
         match msg_result {
             Ok(Message::Text(text)) => {
                 match serde_json::from_str::<ClientMessage>(&text) {
-Ok(client_msg) => {
-    // DEBUG: print received info
-    println!("Received from client {}: {:?}", user_id, client_msg);
-    let user_request = UserRequest {
-        id: user_id.clone(),
-        parameters: client_msg.parameters,
-    };
+                    Ok(ClientMessage::Request { parameters }) => {
+                        // DEBUG: print received info
+                        println!("Received request from client {}: {:?}", user_id, parameters);
+                        let user_request = UserRequest {
+                            id: user_id.clone(),
+                            parameters,
+                        };
 
                         // Reunite the WebSocket streams
                         let websocket = ws_sender.reunite(ws_receiver)?;
@@ -420,10 +436,23 @@ Ok(client_msg) => {
 
                         if queue_system.add_user(queued_user).await? {
                             info!("User {} added to queue successfully", user_id);
+                            
+                            // Start listening for additional messages (like cancel)
+                            let queue_system_clone = Arc::clone(&queue_system);
+                            let user_id_clone = user_id.clone();
+                            
+                            tokio::spawn(async move {
+                                handle_user_messages(queue_system_clone, user_id_clone).await;
+                            });
                         } else {
                             warn!("Failed to add user {} to queue (queue full)", user_id);
                             return Ok(());
                         }
+                    }
+                    Ok(ClientMessage::Cancel) => {
+                        // Handle cancel message on initial connection (shouldn't happen normally)
+                        info!("User {} sent cancel before being queued", user_id);
+                        return Ok(());
                     }
                     Err(e) => {
                         error!("Failed to parse client message: {}", e);
@@ -470,6 +499,84 @@ Ok(client_msg) => {
     });
 
     Ok(())
+}
+
+async fn handle_user_messages(queue_system: Arc<QueueSystem>, user_id: String) {
+    loop {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
+        // Get websocket connection
+        let ws_option = {
+            let connections = queue_system.user_connections.read().await;
+            connections.get(&user_id).cloned()
+        };
+        
+        if let Some(ws) = ws_option {
+            // Try to read a message without blocking
+            let message_result = {
+                let mut ws_lock = ws.lock().await;
+                // We'll use a timeout to avoid blocking indefinitely
+                tokio::time::timeout(Duration::from_millis(10), ws_lock.next()).await
+            };
+            
+            match message_result {
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    match serde_json::from_str::<ClientMessage>(&text) {
+                        Ok(ClientMessage::Cancel) => {
+                            info!("User {} requested cancellation", user_id);
+                            queue_system.cancel_user(&user_id).await;
+                            break;
+                        }
+                        Ok(ClientMessage::Request { .. }) => {
+                            // Ignore additional request messages
+                            warn!("User {} sent additional request after being queued", user_id);
+                        }
+                        Err(e) => {
+                            error!("Failed to parse message from user {}: {}", user_id, e);
+                        }
+                    }
+                }
+                Ok(Some(Ok(Message::Close(_)))) => {
+                    info!("WebSocket connection closed by user {}", user_id);
+                    queue_system.remove_user(&user_id).await;
+                    break;
+                }
+                Ok(Some(Ok(Message::Binary(_)))) => {
+                    // Ignore binary messages
+                    continue;
+                }
+                Ok(Some(Ok(Message::Ping(_)))) => {
+                    // Ignore ping messages
+                    continue;
+                }
+                Ok(Some(Ok(Message::Pong(_)))) => {
+                    // Ignore pong messages
+                    continue;
+                }
+                Ok(Some(Ok(Message::Frame(_)))) => {
+                    // Ignore frame messages
+                    continue;
+                }
+                Ok(Some(Err(e))) => {
+                    error!("WebSocket error for user {}: {}", user_id, e);
+                    queue_system.remove_user(&user_id).await;
+                    break;
+                }
+                Ok(None) => {
+                    // Connection closed
+                    queue_system.remove_user(&user_id).await;
+                    break;
+                }
+                Err(_) => {
+                    // Timeout - no message available, continue listening
+                    continue;
+                }
+            }
+        } else {
+            // User connection not found, stop listening
+            break;
+        }
+    }
 }
 
 #[tokio::main]
