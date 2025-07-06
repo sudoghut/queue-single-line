@@ -46,6 +46,8 @@ enum ServerMessage {
     Error { message: String },
     #[serde(rename = "queue_full")]
     QueueFull { message: String },
+    #[serde(rename = "ip_restricted")]
+    IpRestricted { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +57,7 @@ struct ClientMessage {
 
 struct QueuedUser {
     id: String,
+    ip_address: String,
     request: UserRequest,
     websocket: Arc<Mutex<WebSocketStream<TcpStream>>>,
 }
@@ -62,6 +65,8 @@ struct QueuedUser {
 struct QueueSystem {
     queue: Arc<Mutex<VecDeque<QueuedUser>>>,
     processing_user: Arc<Mutex<Option<String>>>,
+    processing_ip: Arc<Mutex<Option<String>>>,
+    queued_ips: Arc<RwLock<HashMap<String, String>>>, // IP -> User ID mapping
     user_connections: Arc<RwLock<HashMap<String, Arc<Mutex<WebSocketStream<TcpStream>>>>>>,
     http_client: Client,
     target_url: String,
@@ -85,6 +90,8 @@ impl QueueSystem {
         Ok(QueueSystem {
             queue: Arc::new(Mutex::new(VecDeque::new())),
             processing_user: Arc::new(Mutex::new(None)),
+            processing_ip: Arc::new(Mutex::new(None)),
+            queued_ips: Arc::new(RwLock::new(HashMap::new())),
             user_connections: Arc::new(RwLock::new(HashMap::new())),
             http_client: Client::new(),
             target_url,
@@ -93,6 +100,39 @@ impl QueueSystem {
     }
 
     async fn add_user(&self, user: QueuedUser) -> Result<bool> {
+        // Check if IP is already in queue or being processed
+        {
+            let queued_ips = self.queued_ips.read().await;
+            if queued_ips.contains_key(&user.ip_address) {
+                let message = ServerMessage::IpRestricted {
+                    message: "您的IP地址已有请求在处理中，请等待完成后再试".to_string(),
+                };
+                
+                if let Ok(msg_str) = serde_json::to_string(&message) {
+                    println!("Sent to client {}: {}", user.id, msg_str);
+                    let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+                }
+                
+                return Ok(false);
+            }
+        }
+
+        {
+            let processing_ip = self.processing_ip.lock().await;
+            if processing_ip.as_ref() == Some(&user.ip_address) {
+                let message = ServerMessage::IpRestricted {
+                    message: "您的IP地址已有请求在处理中，请等待完成后再试".to_string(),
+                };
+                
+                if let Ok(msg_str) = serde_json::to_string(&message) {
+                    println!("Sent to client {}: {}", user.id, msg_str);
+                    let _ = user.websocket.lock().await.send(Message::Text(msg_str)).await;
+                }
+                
+                return Ok(false);
+            }
+        }
+
         let mut queue = self.queue.lock().await;
         
         if queue.len() >= MAX_QUEUE_SIZE {
@@ -110,10 +150,15 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
             return Ok(false);
         }
 
-        // Add user to connections map
+        // Add user to connections map and IP tracking
         {
             let mut connections = self.user_connections.write().await;
             connections.insert(user.id.clone(), user.websocket.clone());
+        }
+
+        {
+            let mut queued_ips = self.queued_ips.write().await;
+            queued_ips.insert(user.ip_address.clone(), user.id.clone());
         }
 
         queue.push_back(user);
@@ -123,6 +168,11 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
     }
 
     async fn remove_user(&self, user_id: &str) {
+        let user_ip = {
+            let queue = self.queue.lock().await;
+            queue.iter().find(|user| user.id == user_id).map(|user| user.ip_address.clone())
+        };
+
         {
             let mut queue = self.queue.lock().await;
             queue.retain(|user| user.id != user_id);
@@ -133,11 +183,22 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
             connections.remove(user_id);
         }
 
+        // Remove from IP tracking
+        if let Some(ip) = user_ip {
+            let mut queued_ips = self.queued_ips.write().await;
+            queued_ips.remove(&ip);
+        }
+
         {
             let mut processing = self.processing_user.lock().await;
             if processing.as_ref() == Some(&user_id.to_string()) {
                 *processing = None;
             }
+        }
+
+        {
+            let mut processing_ip = self.processing_ip.lock().await;
+            *processing_ip = None;
         }
 
         info!("User {} removed from queue", user_id);
@@ -179,10 +240,21 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
         if let Some(user) = next_user {
             info!("Processing user: {}", user.id);
             
-            // Set processing user
+            // Set processing user and IP
             {
                 let mut processing = self.processing_user.lock().await;
                 *processing = Some(user.id.clone());
+            }
+
+            {
+                let mut processing_ip = self.processing_ip.lock().await;
+                *processing_ip = Some(user.ip_address.clone());
+            }
+
+            // Remove from queued IPs since it's now processing
+            {
+                let mut queued_ips = self.queued_ips.write().await;
+                queued_ips.remove(&user.ip_address);
             }
 
             // Send processing message
@@ -245,6 +317,11 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
             {
                 let mut processing = self.processing_user.lock().await;
                 *processing = None;
+            }
+
+            {
+                let mut processing_ip = self.processing_ip.lock().await;
+                *processing_ip = None;
             }
 
             self.remove_user(&user.id).await;
@@ -311,7 +388,7 @@ if let Ok(msg_str) = serde_json::to_string(&message) {
     }
 }
 
-async fn handle_websocket(stream: TcpStream, queue_system: Arc<QueueSystem>) -> Result<()> {
+async fn handle_websocket(stream: TcpStream, queue_system: Arc<QueueSystem>, client_ip: String) -> Result<()> {
     let websocket = accept_async(stream).await?;
     let user_id = Uuid::new_v4().to_string();
     info!("New WebSocket connection: {}", user_id);
@@ -336,6 +413,7 @@ Ok(client_msg) => {
 
                         let queued_user = QueuedUser {
                             id: user_id.clone(),
+                            ip_address: client_ip,
                             request: user_request,
                             websocket: Arc::new(Mutex::new(websocket)),
                         };
@@ -415,10 +493,11 @@ async fn main() -> Result<()> {
 
     while let Ok((stream, addr)) = listener.accept().await {
         info!("New connection from: {}", addr);
+        let client_ip = addr.ip().to_string();
         let queue_system_clone = Arc::clone(&queue_system);
         
         tokio::spawn(async move {
-            if let Err(e) = handle_websocket(stream, queue_system_clone).await {
+            if let Err(e) = handle_websocket(stream, queue_system_clone, client_ip).await {
                 error!("Error handling WebSocket connection: {}", e);
             }
         });
