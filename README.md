@@ -61,7 +61,7 @@ You can build a release binary within a Fedora Docker container:
 
 1.  **Build Image:** `docker build -t queue-fedora .`
 2.  **Create Container:** `docker create --name queue-fedora-container queue-fedora`
-3.  **Copy Binary:** `docker cp queue-fedora-container:/app/target/release/queue-fedora .`
+3.  **Copy Binary:** `docker cp queue-fedora-container:/app/target/release/queue-single-line ./queue-fedora`
 4.  **Cleanup (Optional):** `docker rm queue-fedora-container`
 5.  **Remove Image (Optional):** `docker rmi queue-fedora`
 
