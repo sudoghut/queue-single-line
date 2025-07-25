@@ -595,8 +595,8 @@ async fn main() -> Result<()> {
     queue_system.clone().start_position_broadcaster();
 
     // Start WebSocket server
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
-    info!("WebSocket server listening on ws://127.0.0.1:8080");
+    let listener = TcpListener::bind("127.0.0.1:3002").await?;
+    info!("WebSocket server listening on ws://127.0.0.1:3002");
 
     while let Ok((stream, addr)) = listener.accept().await {
         info!("New connection from: {}", addr);

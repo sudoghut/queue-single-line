@@ -80,7 +80,7 @@ Now you have the `queue-fedora` binary built in your host server, ready to run o
    ```bash
    cargo run
    ```
-   The WebSocket server will start on `ws://127.0.0.1:8080`
+   The WebSocket server will start on `ws://127.0.0.1:3002`
 
 2. **Test with the HTML client**:
    - Open `client.html` in a web browser
@@ -138,7 +138,7 @@ src/
 - `MAX_QUEUE_SIZE`: 30 users
 - `PROCESSING_DELAY`: 10 seconds
 - `QUEUE_UPDATE_INTERVAL`: 1 second
-- `SERVER_ADDRESS`: 127.0.0.1:8080
+- `SERVER_ADDRESS`: 127.0.0.1:3002
 
 ### Dependencies
 

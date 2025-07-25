@@ -4,10 +4,10 @@ import json
 
 async def test_connection():
     try:
-        print('Attempting to connect to ws://127.0.0.1:8080...')
+        print('Attempting to connect to ws://127.0.0.1:3002...')
         # Use asyncio.wait_for to add timeout to the connection
         websocket = await asyncio.wait_for(
-            websockets.connect('ws://127.0.0.1:8080'), 
+            websockets.connect('ws://127.0.0.1:3002'), 
             timeout=10
         )
         

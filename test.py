@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Server configuration
-SERVER_URL = "ws://127.0.0.1:8080"
+SERVER_URL = "ws://127.0.0.1:3002"
 DB_PATH = "queue_log.db"
 TEST_PARAMETERS = {"test": "data", "value": 123}
 
@@ -402,7 +402,7 @@ async def main():
     """Main test function"""
     print("Queue Server Test Suite")
     print("="*30)
-    print("Make sure the Rust server is running on ws://127.0.0.1:8080")
+    print("Make sure the Rust server is running on ws://127.0.0.1:3002")
     print("Press Enter to continue or Ctrl+C to cancel...")
     
     try:
