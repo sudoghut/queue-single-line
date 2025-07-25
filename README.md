@@ -67,6 +67,58 @@ You can build a release binary within a Fedora Docker container:
 
 Now you have the `queue-fedora` binary built in your host server, ready to run on a compatible system.
 
+## Running as a Systemd Service (Fedora)
+
+To run `queue` as a background service managed by `systemd` on Fedora:
+
+1.  **Prerequisites:**
+    *   Ensure you have built the release binary (`./target/release/queue`).
+    *   Make the binary executable: `sudo chmod +x ./target/release/queue`
+    *   Place the `queue` project directory.
+
+2.  **Create a systemd Unit File:**
+    Create a file named `queue.service` in `/etc/systemd/system/` with the following content. **Change the following values** for your actual settings.
+
+    ```ini
+    [Unit]
+    Description=Queue Server
+    After=network.target
+
+    [Service]
+    User=linuxuser
+    Group=linuxuser
+    WorkingDirectory=/home/linuxuser/queue-single-line
+    ExecStart=/usr/bin/env /home/linuxuser/queue-single-line/queue-fedora
+    Restart=on-failure
+    StandardOutput=journal
+    StandardError=journal
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
+
+    *   `User`/`Group`: The user/group the service will run under. Ensure this user has read/write permissions for the `WorkingDirectory`, `data.db`, and `access_token.txt`.
+    *   `WorkingDirectory`: The absolute path to the directory where you placed the `queue` project.
+    *   `ExecStart`: The absolute path to the compiled `queue` binary.
+
+3.  **Enable and Start the Service:**
+    ```bash
+    # Reload systemd to recognize the new service file
+    sudo systemctl daemon-reload
+
+    # Enable the service to start on boot
+    sudo systemctl enable queue.service
+
+    # Start the service immediately
+    sudo systemctl start queue.service
+    ```
+
+4.  **Manage the Service:**
+    *   **Check Status:** `sudo systemctl status queue.service`
+    *   **Stop Service:** `sudo systemctl stop queue.service`
+    *   **Restart Service:** `sudo systemctl restart queue.service`
+    *   **View Logs (if using journald):** `sudo journalctl -u queue.service -f` (Use `-f` to follow logs)
+
 ### Configuration
 
 1. **Target API URL**: Update the `URL.txt` file with your target API endpoint
