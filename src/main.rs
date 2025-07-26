@@ -287,7 +287,7 @@ if let Ok(msg_str) = serde_json::to_string(&processing_msg) {
             let token = fs::read_to_string("token.txt")?.trim().to_string();
             let mut parameters = user.request.parameters.clone();
             if let Value::Object(ref mut map) = parameters {
-                map.insert("token".to_string(), Value::String(token));
+                map.insert("access_token".to_string(), Value::String(token));
             } else {
                 // If parameters is not an object, create a new object with the token
                 let mut new_map = serde_json::Map::new();
