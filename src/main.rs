@@ -283,11 +283,21 @@ if let Ok(msg_str) = serde_json::to_string(&processing_msg) {
 
             // Wait for the required delay
             sleep(PROCESSING_DELAY).await;
-
+            // read token.txt and add it to the request parameters
+            let token = fs::read_to_string("token.txt")?.trim().to_string();
+            let mut parameters = user.request.parameters.clone();
+            if let Value::Object(ref mut map) = parameters {
+                map.insert("token".to_string(), Value::String(token));
+            } else {
+                // If parameters is not an object, create a new object with the token
+                let mut new_map = serde_json::Map::new();
+                new_map.insert("access_token".to_string(), Value::String(token));
+                parameters = Value::Object(new_map);
+            }
             // Make HTTP request
             let response_result = self.http_client
                 .post(&self.target_url)
-                .json(&user.request.parameters)
+                .json(&parameters)
                 .send()
                 .await;
             // // Print the response_result for testing

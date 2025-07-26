@@ -54,6 +54,7 @@ A Rust-based queue management system that handles API requests through WebSocket
    ```bash
    cargo build
    ```
+3. Rename the `_token.txt` file to `token.txt` and place it in the project root directory. This file should contain your API access token.
 
 ## Building with Docker (Alternative)
 
